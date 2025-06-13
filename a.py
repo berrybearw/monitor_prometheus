@@ -94,7 +94,7 @@ def split_load_by_day(results, sample_every=10):
 
     return data_by_day
 
-def write_excel_per_day(data_by_day, load1_by_day):
+def write_excel_per_day(data_by_day, load1_by_day, linux_core_count):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     for date, host_data in data_by_day.items():
         output_file = os.path.join(OUTPUT_DIR, f"cpu_{date}.xlsx")
@@ -138,13 +138,19 @@ def write_excel_per_day(data_by_day, load1_by_day):
             if "Linux_Load1" in sheet_names:
                 row_count = len(load1_by_day[date])
                 if row_count > 0:
+                    # 取得本日第一台 Linux instance 的 core 數
+                    instance = None
+                    for item in linux_core_count:
+                        instance = item
+                        break
+                    core_num = linux_core_count.get(instance, "?")
                     chart = book.add_chart({'type': 'bar'})
                     chart.add_series({
                         'name':       'Linux Load1',
                         'categories': f"='Linux_Load1'!$A$2:$A${row_count + 1}",  # Y軸: 時間
                         'values':     f"='Linux_Load1'!$B$2:$B${row_count + 1}",  # X軸: Load1
                     })
-                    chart.set_title({'name': f'Load Average (1min) - Linux - {date}'})
+                    chart.set_title({'name': f'Load Average (1min) - Linux - {date} ({core_num} cores)'})
                     chart.set_x_axis({'name': 'Load1'})
                     chart.set_y_axis({'name': 'Time'})
                     chart.set_legend({'position': 'bottom'})
@@ -153,12 +159,27 @@ def write_excel_per_day(data_by_day, load1_by_day):
 
         print(f"✅ 匯出完成：{output_file}")
 
+def get_linux_core_count():
+    query = 'count(count(node_cpu_seconds_total{mode="idle"}) by (cpu, instance)) by (instance)'
+    url = f"{PROMETHEUS}/api/v1/query"
+    params = {'query': query}
+    response = requests.get(url, params=params)
+    data = response.json()
+    core_count = {}
+    if data["status"] == "success":
+        for item in data["data"]["result"]:
+            instance = item["metric"]["instance"]
+            value = int(float(item["value"][1]))
+            core_count[instance] = value
+    return core_count
+
 if __name__ == '__main__':
     print("🔍 查詢 Prometheus CPU 使用率資料中...")
 
     linux_results = query_range(LINUX_CPU_QUERY, START, END, STEP)
     windows_results = query_range(WINDOWS_CPU_QUERY, START, END, STEP)
     linux_load1_results = query_range(LINUX_LOAD1_QUERY, START, END, STEP)
+    linux_core_count = get_linux_core_count()  # <--- 新增
 
     if not linux_results and not windows_results:
         print("🚫 沒查到任何 CPU 資料")
@@ -171,4 +192,4 @@ if __name__ == '__main__':
     daily_load1 = split_load_by_day(linux_load1_results)
 
     print("💾 開始寫入 Excel 報表...")
-    write_excel_per_day(daily_data, daily_load1)
+    write_excel_per_day(daily_data, daily_load1, linux_core_count)  # <--- 新增參數
