@@ -102,37 +102,72 @@ def write_excel_per_day(data_by_day, load1_by_day, linux_core_count):
             book = writer.book
             sheet_names = {}
 
-            # 先寫入 CPU 資料
+            # 先寫入 Linux/Windows 資料
             for host_type in ["Linux", "Windows"]:
                 if host_type in host_data and host_data[host_type]:
-                    df = pd.DataFrame(host_data[host_type], columns=["Timestamp", "CPU_Usage"])
+                    if host_type == "Linux":
+                        cpu_data = host_data[host_type]
+                        load1_data = load1_by_day.get(date, [])
+                        max_len = max(len(cpu_data), len(load1_data))
+                        rows = []
+                        for i in range(max_len):
+                            t = cpu_data[i][0] if i < len(cpu_data) else None
+                            cpu = cpu_data[i][1] if i < len(cpu_data) else None
+                            load1 = load1_data[i][1] if i < len(load1_data) else None
+                            rows.append([t, cpu, load1])
+                        df = pd.DataFrame(rows, columns=["Timestamp", "CPU_Usage", "Load1"])
+                    else:
+                        df = pd.DataFrame(host_data[host_type], columns=["Timestamp", "CPU_Usage"])
                     df.to_excel(writer, sheet_name=host_type, index=False)
                     sheet_names[host_type] = host_type
 
-            # 寫入 Linux Load1
-            if date in load1_by_day and load1_by_day[date]:
-                df_load = pd.DataFrame(load1_by_day[date], columns=["Timestamp", "Load1"])
-                df_load.to_excel(writer, sheet_name="Linux_Load1", index=False)
-                sheet_names["Linux_Load1"] = "Linux_Load1"
-
-            # 產生 CPU 圖表
+            # 產生圖表
             for host_type in ["Linux", "Windows"]:
                 if host_type in sheet_names:
-                    row_count = len(host_data[host_type])
-                    if row_count == 0:
-                        continue
-                    chart = book.add_chart({'type': 'bar'})
-                    chart.add_series({
-                        'name':       host_type,
-                        'categories': f"='{host_type}'!$A$2:$A${row_count + 1}",
-                        'values':     f"='{host_type}'!$B$2:$B${row_count + 1}",
-                    })
-                    chart.set_title({'name': f'CPU Peak - {host_type} - {date}'})
-                    chart.set_x_axis({'name': 'CPU Usage (%)'})
-                    chart.set_y_axis({'name': 'Time'})
-                    chart.set_legend({'position': 'bottom'})
-                    chart_sheet = book.add_worksheet(f'Chart_{host_type}')
-                    chart_sheet.insert_chart('B3', chart)
+                    if host_type == "Linux":
+                        # 用剛剛建立的 df
+                        # CPU Usage 圖表
+                        chart_cpu = book.add_chart({'type': 'bar'})
+                        chart_cpu.add_series({
+                            'name': 'CPU Usage',
+                            'categories': f"='Linux'!$A$2:$A${len(df)+1}",
+                            'values': f"='Linux'!$B$2:$B${len(df)+1}",
+                        })
+                        core_num = next(iter(linux_core_count.values()), "?")
+                        chart_cpu.set_title({'name': f'CPU Usage - Linux - {date} ({core_num} cores)'})
+                        chart_cpu.set_x_axis({'name': 'Time'})
+                        chart_cpu.set_y_axis({'name': 'CPU Usage (%)'})
+                        chart_cpu.set_legend({'position': 'bottom'})
+
+                        # Load1 圖表
+                        chart_load = book.add_chart({'type': 'bar'})
+                        chart_load.add_series({
+                            'name': 'Load1',
+                            'categories': f"='Linux'!$A$2:$A${len(df)+1}",
+                            'values': f"='Linux'!$C$2:$C${len(df)+1}",
+                        })
+                        chart_load.set_title({'name': f'Load1 - Linux - {date} ({core_num} cores)'})
+                        chart_load.set_x_axis({'name': 'Time'})
+                        chart_load.set_y_axis({'name': 'Load1'})
+                        chart_load.set_legend({'position': 'bottom'})
+
+                        # 插入到同一個分頁
+                        chart_sheet = book.add_worksheet('Chart_Linux')
+                        chart_sheet.insert_chart('B3', chart_cpu)
+                        chart_sheet.insert_chart('B20', chart_load)
+                    else:
+                        chart = book.add_chart({'type': 'bar'})
+                        chart.add_series({
+                            'name': 'Windows',
+                            'categories': f"='Windows'!$A$2:$A${len(df)+1}",
+                            'values': f"='Windows'!$B$2:$B${len(df)+1}",
+                        })
+                        chart.set_title({'name': f'CPU Peak - Windows - {date}'})
+                        chart.set_x_axis({'name': 'CPU Usage (%)'})
+                        chart.set_y_axis({'name': 'Time'})
+                        chart.set_legend({'position': 'bottom'})
+                        chart_sheet = book.add_worksheet('Chart_Windows')
+                        chart_sheet.insert_chart('B3', chart)
 
             # 產生 Linux Load1 圖表
             if "Linux_Load1" in sheet_names:
